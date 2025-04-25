@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Win Percentage</title>
+</head>
+<body>
+    <h1>Win Percentage</h1>
+    <form method="POST">
+        <label for="player">Player Name:</label>
+        <input type="text" id="player" name="player" required>
+        <br>
+        <button type="submit">Calculate</button>
+    </form>
+    {% if player %}
+        <h2>Results</h2>
+        <p>{{ player }}'s Win Percentage: {{ percentage }}%</p>
+    {% endif %}
+    <a href="/">Back to Home</a>
+</body>
+</html>

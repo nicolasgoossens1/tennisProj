@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Head-to-Head Comparison</title>
+</head>
+<body>
+    <h1>Head-to-Head Comparison</h1>
+    <form method="POST">
+        <label for="player1">Player 1:</label>
+        <input type="text" id="player1" name="player1" required>
+        <br>
+        <label for="player2">Player 2:</label>
+        <input type="text" id="player2" name="player2" required>
+        <br>
+        <button type="submit">Compare</button>
+    </form>
+    {% if player1 and player2 %}
+        <h2>Results</h2>
+        <p>{{ player1 }} Wins: {{ player1_wins }}</p>
+        <p>{{ player2 }} Wins: {{ player2_wins }}</p>
+    {% endif %}
+    <a href="/">Back to Home</a>
+</body>
+</html>
