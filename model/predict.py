@@ -1,7 +1,7 @@
 import pandas as pd
 import joblib
 from .prepare_data import fetch_recent_matches, calculate_win_percentages, win_percentage_surface, average_odds, head2head
-from src.data_processing import get_connection
+from model.data_processing import get_connection
 
 # Load the trained model and feature names
 model = joblib.load('tennis_model.pkl')

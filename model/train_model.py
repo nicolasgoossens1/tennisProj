@@ -3,7 +3,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from prepare_data import fetch_recent_matches, calculate_win_percentages
-from src.data_processing import get_connection
+from model.data_processing import get_connection
 import joblib
 import logging
 

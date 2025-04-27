@@ -1,4 +1,4 @@
-from src.data_processing import (
+from model.data_processing import (
     head2head, win_percentage, average_odds, average_points_difference,
     win_percentage_surface, plot_player_ranking
 )

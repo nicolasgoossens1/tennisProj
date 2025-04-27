@@ -1,213 +1,153 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.model_selection import train_test_split
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
-from torch.utils.data import DataLoader, TensorDataset
-from sklearn.model_selection import train_test_split, KFold
-from prepare_data import fetch_recent_matches, calculate_win_percentages, win_percentage_surface, average_odds, head2head, player_rankings
+import numpy as np
+from prepare_data import fetch_recent_matches, calculate_win_percentages, win_percentage_surface, head2head, calculate_recent_win_percentage
 
-# Define a simple neural network
+# Define the neural network
 class TennisPredictor(nn.Module):
     def __init__(self, input_size):
         super(TennisPredictor, self).__init__()
         self.fc = nn.Sequential(
-            nn.Linear(input_size, 64),
+            nn.Linear(input_size, 128),
             nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(32, 1),
-            nn.Sigmoid()  # Output probability of player1 winning
+            nn.Dropout(0.2),
+            nn.Linear(32, 16),
+            nn.ReLU(),
+            nn.Linear(16, 1),
+            nn.Sigmoid()  # Output probability of Player 1 winning
         )
 
     def forward(self, x):
         return self.fc(x)
 
 # Prepare features and labels
-def prepare_features(player1, player2, surface, recent_matches):
-    win_percentages = calculate_win_percentages(recent_matches)
-    player1_recent_win_percentage = win_percentages.get(player1, 0)
-    player2_recent_win_percentage = win_percentages.get(player2, 0)
-    player1_surface_win_percentage = win_percentage_surface(player1, surface, recent_matches)
-    player2_surface_win_percentage = win_percentage_surface(player2, surface, recent_matches)
-    player1_avg_odds, player2_avg_odds = average_odds(player1, player2, recent_matches)
-    head2head_player1_wins, head2head_player2_wins = head2head(player1, player2, recent_matches)
-
-    features = [
-        player1_recent_win_percentage,
-        player2_recent_win_percentage,
-        player1_surface_win_percentage,
-        player2_surface_win_percentage,
-        player1_avg_odds or 0,
-        player2_avg_odds or 0,
-        head2head_player1_wins,
-        head2head_player2_wins,
-    ]
-    rankings = player_rankings(recent_matches)
-    player1_rank = rankings.get(player1, len(rankings) + 1)  # Default to lowest rank if not found
-    player2_rank = rankings.get(player2, len(rankings) + 1)
-    features.extend([player1_rank, player2_rank])
-    
-    return features
-
-def prepare_dataset(recent_matches):
-    data = []
+def prepare_features(matches):
+    """
+    Prepare features for the neural network.
+    """
+    features = []
     labels = []
-    winner_count = 0
-    loser_count = 0
 
-    for _, match in recent_matches.iterrows():
-        player1 = match['Winner']
-        player2 = match['Loser']
+    for _, match in matches.iterrows():
+        player1 = match['Player_1']
+        player2 = match['Player_2']
         surface = match['Surface']
-        label = 1  # Winner is player1
+        round_ = match['Round']
+        series = match['Series']
+        court = match['Court']
 
-        # Count winners and losers
-        winner_count += 1
-        loser_count += 1
+        # Numerical features
+        normalized_rank_1 = match['Rank_1'] / 1000
+        normalized_rank_2 = match['Rank_2'] / 1000
+        normalized_pts_1 = match['Pts_1'] / 1000
+        normalized_pts_2 = match['Pts_2'] / 1000
+        normalized_odd_1 = match['Odd_1'] / 10
+        normalized_odd_2 = match['Odd_2'] / 10
 
-        # Positive example: Winner is player1
-        features = prepare_features(player1, player2, surface, recent_matches)
-        data.append(features)
-        labels.append(label)
+        # Categorical features (one-hot encoding)
+        surface_encoded = one_hot_encode(surface, ['Hard', 'Clay', 'Grass', 'Carpet'])
+        round_encoded = one_hot_encode(round_, ['R32', 'QF', 'SF', 'F'])
+        series_encoded = one_hot_encode(series, ['Grand Slam', 'Masters', 'ATP500', 'ATP250'])
+        court_encoded = [1 if court == 'Indoor' else 0]
 
-        # Negative example: Winner is player2 (swap players)
-        features = prepare_features(player2, player1, surface, recent_matches)
-        data.append(features)
-        labels.append(0)
+        # Player stats
+        recent_win_pct_1 = calculate_recent_win_percentage(player1, matches)
+        recent_win_pct_2 = calculate_recent_win_percentage(player2, matches)
+        surface_win_pct_1 = win_percentage_surface(player1, surface, matches)
+        surface_win_pct_2 = win_percentage_surface(player2, surface, matches)
+        head_to_head_1, head_to_head_2 = head2head(player1, player2, matches)
 
-    print(f"Winner count: {winner_count}, Loser count: {loser_count}")
-    return data, labels
+        # Combine all features
+        feature_vector = [
+            normalized_rank_1, normalized_rank_2,
+            normalized_pts_1, normalized_pts_2,
+            normalized_odd_1, normalized_odd_2,
+            *surface_encoded, *round_encoded, *series_encoded, *court_encoded,
+            recent_win_pct_1, recent_win_pct_2,
+            surface_win_pct_1, surface_win_pct_2,
+            head_to_head_1, head_to_head_2
+        ]
+        features.append(feature_vector)
+
+        # Label: 1 if Player_1 is the winner, else 0
+        labels.append(1 if match['Winner'] == player1 else 0)
+
+    return np.array(features), np.array(labels)
+
+def one_hot_encode(value, categories):
+    """
+    One-hot encode a categorical value.
+    """
+    return [1 if value == category else 0 for category in categories]
 
 def main():
-    # Fetch recent matches
-    recent_matches = fetch_recent_matches(5000)
+    # Fetch and preprocess data
+    print("Fetching recent matches...")
+    matches = fetch_recent_matches(5000)
 
-    # Prepare dataset
-    data, labels = prepare_dataset(recent_matches)
+    if matches.empty:
+        print("No matches found. Exiting...")
+        return
+
+    print("Preparing features and labels...")
+    features, labels = prepare_features(matches)
 
     # Normalize features
     scaler = StandardScaler()
-    data = scaler.fit_transform(data)
-
-    print(data[:5])  # Print the first 5 feature sets
-
-    # Convert data and labels to a DataFrame
-    dataset_df = pd.DataFrame(data, columns=[
-        "Player1_RecentWin%", "Player2_RecentWin%", 
-        "Player1_SurfaceWin%", "Player2_SurfaceWin%", 
-        "Player1_AvgOdds", "Player2_AvgOdds", 
-        "Head2Head_Player1Wins", "Head2Head_Player2Wins",
-        "Player1_Rank", "Player2_Rank"
-    ])
-    dataset_df['Label'] = labels
-
-    # Save the dataset to a CSV file for inspection
-    dataset_df.to_csv("dataset.csv", index=False)
-
-    # Print the first few rows of the dataset
-    print(dataset_df.head())
+    features = scaler.fit_transform(features)
 
     # Split into training and testing sets
-    train_data, test_data, train_labels, test_labels = train_test_split(data, labels, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, random_state=42)
 
-    # Convert to tensors
-    train_data = torch.tensor(train_data, dtype=torch.float32)
-    train_labels = torch.tensor(train_labels, dtype=torch.float32).unsqueeze(1)
-    test_data = torch.tensor(test_data, dtype=torch.float32)
-    test_labels = torch.tensor(test_labels, dtype=torch.float32).unsqueeze(1)
-
-    # Create DataLoader for batch training
-    train_dataset = TensorDataset(train_data, train_labels)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    # Convert to PyTorch tensors
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
+    X_test = torch.tensor(X_test, dtype=torch.float32)
+    y_test = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1)
 
     # Initialize the model
-    input_size = train_data.shape[1]
+    input_size = X_train.shape[1]
     model = TennisPredictor(input_size)
 
     # Define loss and optimizer
     criterion = nn.BCELoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)
+    optimizer = optim.Adam(model.parameters(), lr=0.01)
 
     # Training loop
+    print("Training the model...")
     for epoch in range(100):
-        for batch_features, batch_labels in train_loader:
-            optimizer.zero_grad()
-            output = model(batch_features)
-            loss = criterion(output, batch_labels)
-            loss.backward()
-            optimizer.step()
+        model.train()
+        optimizer.zero_grad()
+        output = model(X_train)
+        loss = criterion(output, y_train)
+        loss.backward()
+        optimizer.step()
 
         if (epoch + 1) % 10 == 0:
             print(f"Epoch [{epoch+1}/100], Loss: {loss.item():.4f}")
 
-    # Save the model
-    torch.save(model.state_dict(), "neural_model.pth")
-    print(f"Label distribution: {sum(labels)} positive, {len(labels) - sum(labels)} negative")
-    print("Model saved!")
-
-def evaluate_model(model, test_data, test_labels):
+    # Evaluate the model
+    print("Evaluating the model...")
     model.eval()
     with torch.no_grad():
-        predictions = model(test_data)
-        predictions = (predictions > 0.5).float()  # Convert probabilities to binary predictions
-        accuracy = (predictions == test_labels).float().mean().item()
+        predictions = model(X_test)
+        predictions = (predictions > 0.5).float()
+        accuracy = (predictions == y_test).float().mean().item()
         print(f"Test Accuracy: {accuracy:.2%}")
 
-def cross_validate(model, data, labels, k=5):
-    """
-    Perform k-fold cross-validation.
-    """
-    kf = KFold(n_splits=k, shuffle=True, random_state=42)
-    accuracies = []
-
-    for train_index, test_index in kf.split(data):
-        train_data, test_data = data[train_index], data[test_index]
-        train_labels, test_labels = labels[train_index], labels[test_index]
-
-        # Convert to tensors
-        train_data = torch.tensor(train_data, dtype=torch.float32)
-        train_labels = torch.tensor(train_labels, dtype=torch.float32).unsqueeze(1)
-        test_data = torch.tensor(test_data, dtype=torch.float32)
-        test_labels = torch.tensor(test_labels, dtype=torch.float32).unsqueeze(1)
-
-        # Train the model
-        model.train()
-        optimizer = optim.Adam(model.parameters(), lr=0.001)
-        criterion = nn.BCELoss()
-
-        for epoch in range(50):  # Shorter training for cross-validation
-            optimizer.zero_grad()
-            output = model(train_data)
-            loss = criterion(output, train_labels)
-            loss.backward()
-            optimizer.step()
-
-        # Evaluate the model
-        model.eval()
-        with torch.no_grad():
-            predictions = model(test_data)
-            predictions = (predictions > 0.5).float()
-            accuracy = (predictions == test_labels).float().mean().item()
-            accuracies.append(accuracy)
-
-    print(f"Cross-Validation Accuracy: {sum(accuracies) / len(accuracies):.2%}")
-
-def hyperparameter_tuning(data, labels):
-    """
-    Perform hyperparameter tuning for the neural network.
-    """
-    learning_rates = [0.01, 0.001, 0.0001]
-    batch_sizes = [16, 32, 64]
-    best_accuracy = 0
-    best_params = {}
-
-    for lr in learning_rates:
-        for batch_size in batch_sizes:
-            print(f"Testing with lr={lr}, batch_size={batch_size}")
-            # Train and evaluate the model
-            # (Reuse the training loop and evaluation code here)
-            # Update best_accuracy and best_params if needed
+    # Save the model
+    torch.save(model.state_dict(), "tennis_predictor.pth")
+    print("Model saved!")
 
 if __name__ == "__main__":
     main()

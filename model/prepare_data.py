@@ -1,19 +1,33 @@
+import os
 import sys
-sys.path.append('c:/Users/nicol/Downloads/tennisProj')
-
 import pandas as pd
 from tqdm import tqdm
-from src.data_processing import get_connection
+
+# Add the project root directory to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from data_processing import get_connection
 
 def fetch_recent_matches(n):
-    """
-    Fetch the most recent `n` matches from the database and filter invalid matches.
-    """
     try:
         conn = get_connection()
         query = """
         SELECT 
-            Winner, Loser, Date, Surface, Odd_1, Odd_2
+            Player_1, 
+            Player_2, 
+            Date, 
+            Surface, 
+            Round, 
+            Series, 
+            Court, 
+            Rank_1, 
+            Rank_2, 
+            Pts_1, 
+            Pts_2, 
+            Odd_1, 
+            Odd_2,
+            Winner,
+            Loser
         FROM atp_tennis_with_loser
         ORDER BY Date DESC
         LIMIT ?;
@@ -21,9 +35,14 @@ def fetch_recent_matches(n):
         recent_matches = pd.read_sql_query(query, conn, params=(n,))
         conn.close()
 
+        print("Fetched matches shape:", recent_matches.shape)
+        print("First few rows of fetched matches:")
+        print(recent_matches.head())
+
         # Filter invalid matches
         recent_matches = filter_invalid_matches(recent_matches)
 
+        print("Filtered matches shape:", recent_matches.shape)
         return recent_matches
     except Exception as e:
         print(f"Error fetching recent matches: {e}")
@@ -43,6 +62,24 @@ def filter_invalid_matches(recent_matches):
     recent_matches = recent_matches[(recent_matches['Odd_1'] <= 100) & (recent_matches['Odd_2'] <= 100)]
 
     return recent_matches
+
+
+def calculate_recent_win_percentage(player, recent_matches):
+    """
+    Calculate the win percentage of a player over their last n matches.
+    """
+    # Fetch matches for the player
+    player_matches = recent_matches[
+        ((recent_matches['Winner'] == player) | (recent_matches['Loser'] == player))
+    ]
+    if player_matches.empty:
+        return 0  # No matches found
+
+    # Calculate win percentage
+    wins = player_matches['Winner'].value_counts().get(player, 0)
+    return wins / len(player_matches)
+
+
 
 def calculate_win_percentages(recent_matches):
     """
@@ -125,14 +162,6 @@ def head2head(player1, player2, recent_matches):
     player1_wins = matches['Winner'].value_counts().get(player1, 0)
     player2_wins = matches['Winner'].value_counts().get(player2, 0)
     return (player1_wins, player2_wins)
-
-def player_rankings(recent_matches):
-    """
-    Calculate player rankings based on win percentages.
-    """
-    win_percentages = calculate_win_percentages(recent_matches)
-    rankings = {player: rank for rank, player in enumerate(sorted(win_percentages, key=win_percentages.get, reverse=True), 1)}
-    return rankings
 
 def main():
     n = 10000  # Number of recent matches to fetch

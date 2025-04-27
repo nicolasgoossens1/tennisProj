@@ -1,46 +1,40 @@
-import sys
-import os
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import torch
+import numpy as np
+from model.neural_model import TennisPredictor, prepare_features
+from model.prepare_data import fetch_recent_matches
 
-# Add the root directory to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Initialize FastAPI app
+app = FastAPI()
 
-from flask import Flask, request, jsonify, render_template
-from model.predict import predict_match
+# Load the saved model
+input_size = 20  # Replace with the actual input size of your model
+model = TennisPredictor(input_size)
+model.load_state_dict(torch.load("tennis_predictor.pth"))
+model.eval()
 
-app = Flask(__name__, template_folder='../templates')
+# Define the input schema
+class MatchFeatures(BaseModel):
+    player1: str
+    player2: str
+    surface: str
 
-@app.route('/')
-def home():
-    """
-    Home page route to serve the frontend.
-    """
-    return render_template('index.html')  # This will serve the HTML file for the home page.
+@app.post("/predict")
+def predict(match: MatchFeatures):
+    # Fetch recent matches
+    recent_matches = fetch_recent_matches(5000)
+    if recent_matches.empty:
+        raise HTTPException(status_code=400, detail="No recent matches found.")
 
-@app.route('/predict', methods=['POST'])
-def predict():
-    """
-    API endpoint to predict the winner of a tennis match.
-    """
-    try:
-        # Get data from the request
-        data = request.json
-        player1 = data.get('player1')
-        player2 = data.get('player2')
-        surface = data.get('surface')
+    # Prepare features for the prediction
+    features, _ = prepare_features(recent_matches)
+    features_tensor = torch.tensor([features], dtype=torch.float32)
 
-        # Validate input
-        if not player1 or not player2 or not surface:
-            return jsonify({'error': 'Missing required fields: player1, player2, surface'}), 400
+    # Make a prediction
+    with torch.no_grad():
+        output = model(features_tensor)
+        probability = output.item()
+        prediction = 1 if probability > 0.5 else 0  # 1 = Player 1 wins, 0 = Player 2 wins
 
-        # Call the predict_match function
-        winner = predict_match(player1, player2, surface)
-
-        # Return the result
-        return jsonify({'winner': winner})
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 400
-    except Exception as e:
-        return jsonify({'error': 'An unexpected error occurred', 'details': str(e)}), 500
-
-if __name__ == '__main__':
-    app.run(debug=True)
+    return {"probability": probability, "prediction": prediction}
